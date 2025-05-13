@@ -1,0 +1,18 @@
+{
+  "restaurant_info": {
+    "name": "Testaurante PHB",
+    "address": "Testere\u00e7o, 6969",
+    "phone": "86988695332",
+    "cnpj": "389769834398474893",
+    "website": ""
+  },
+  "layout": {
+    "show_logo": true,
+    "highlight_total": true,
+    "show_promotional_message": false,
+    "promotional_message": "",
+    "show_thank_you_message": true,
+    "thank_you_message": "Obrigadooooo"
+  },
+  "logo_path": null
+}
