@@ -30,11 +30,24 @@ class _AdminPanelState extends State<AdminPanel> {
   double _marginLeft = 0.0;
   double _marginRight = 0.0;
 
+  // Histórico de pesagens
+  List<Map<String, dynamic>> _weightHistory = [];
+  DateTime? _startDate;
+  DateTime? _endDate;
+  bool _loadingHistory = false;
+
+  // Variáveis para estatísticas
+  int _todayCount = 0;
+  double _todayTotal = 0.0;
+  double _avgWeight = 0.0;
+
   @override
   void initState() {
     super.initState();
     _loadCurrentPrice();
     _loadPrinterSettings();
+    _loadWeightHistory();
+    _loadWeightStats();
   }
 
   Future<void> _loadCurrentPrice() async {
@@ -116,6 +129,36 @@ class _AdminPanelState extends State<AdminPanel> {
       _showSuccessSnackbar("Configurações salvas com sucesso!");
     } catch (e) {
       _showErrorSnackbar("Erro ao salvar configurações: $e");
+    }
+  }
+
+  Future<void> _loadWeightHistory() async {
+    setState(() => _loadingHistory = true);
+    try {
+      final history = await api.getWeightHistory(
+        startDate: _startDate?.toIso8601String(),
+        endDate: _endDate?.toIso8601String(),
+      );
+      setState(() {
+        _weightHistory = history;
+        _loadingHistory = false;
+      });
+    } catch (e) {
+      _showErrorSnackbar("Erro ao carregar histórico: $e");
+      setState(() => _loadingHistory = false);
+    }
+  }
+
+  Future<void> _loadWeightStats() async {
+    try {
+      final stats = await api.getWeightStats();
+      setState(() {
+        _todayCount = stats['today_count'];
+        _todayTotal = stats['today_total'];
+        _avgWeight = stats['avg_weight'];
+      });
+    } catch (e) {
+      print("Erro ao carregar estatísticas: $e");
     }
   }
 
@@ -534,7 +577,7 @@ class _AdminPanelState extends State<AdminPanel> {
                 child: _buildInfoCard(
                   icon: Icons.shopping_cart,
                   title: "Pesagens Hoje",
-                  value: "27",
+                  value: _todayCount.toString(),
                   color: Colors.blue,
                 ),
               ),
@@ -543,7 +586,7 @@ class _AdminPanelState extends State<AdminPanel> {
                 child: _buildInfoCard(
                   icon: Icons.attach_money,
                   title: "Valor Total",
-                  value: "R\$ 1.342,50",
+                  value: "R\$ ${_todayTotal.toStringAsFixed(2)}",
                   color: _primaryColor,
                 ),
               ),
@@ -556,7 +599,7 @@ class _AdminPanelState extends State<AdminPanel> {
                 child: _buildInfoCard(
                   icon: Icons.scale,
                   title: "Peso Médio",
-                  value: "2.73 kg",
+                  value: "${_avgWeight.toStringAsFixed(2)} kg",
                   color: Colors.green,
                 ),
               ),
@@ -720,6 +763,21 @@ class _AdminPanelState extends State<AdminPanel> {
                             filled: true,
                             fillColor: Colors.white,
                           ),
+                          readOnly: true,
+                          onTap: () async {
+                            final date = await showDatePicker(
+                              context: context,
+                              initialDate: _startDate ?? DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now(),
+                            );
+                            if (date != null) {
+                              setState(() => _startDate = date);
+                            }
+                          },
+                          controller: TextEditingController(
+                            text: _startDate?.toString().split(' ')[0] ?? '',
+                          ),
                         ),
                       ),
                       SizedBox(width: 12),
@@ -734,6 +792,21 @@ class _AdminPanelState extends State<AdminPanel> {
                             filled: true,
                             fillColor: Colors.white,
                           ),
+                          readOnly: true,
+                          onTap: () async {
+                            final date = await showDatePicker(
+                              context: context,
+                              initialDate: _endDate ?? DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now(),
+                            );
+                            if (date != null) {
+                              setState(() => _endDate = date);
+                            }
+                          },
+                          controller: TextEditingController(
+                            text: _endDate?.toString().split(' ')[0] ?? '',
+                          ),
                         ),
                       ),
                     ],
@@ -741,7 +814,7 @@ class _AdminPanelState extends State<AdminPanel> {
                   SizedBox(height: 16),
                   Center(
                     child: ElevatedButton.icon(
-                      onPressed: () {},
+                      onPressed: _loadWeightHistory,
                       icon: Icon(Icons.search),
                       label: Text("BUSCAR"),
                       style: ElevatedButton.styleFrom(
@@ -765,12 +838,29 @@ class _AdminPanelState extends State<AdminPanel> {
 
           SizedBox(height: 24),
 
-          // Lista de pesagens (demo)
-          for (int i = 0; i < 5; i++)
-            _buildHistoryItem(
-              date: "13/05/2025 ${14 - i}:${30 - i * 5}",
-              weight: (3.5 - i * 0.25).toStringAsFixed(3),
-              value: (87.5 - i * 6.25).toStringAsFixed(2),
+          // Lista de pesagens
+          if (_loadingHistory)
+            Center(child: CircularProgressIndicator())
+          else if (_weightHistory.isEmpty)
+            Center(
+              child: Column(
+                children: [
+                  Icon(Icons.history, size: 48, color: Colors.grey),
+                  SizedBox(height: 16),
+                  Text(
+                    "Nenhuma pesagem encontrada",
+                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                ],
+              ),
+            )
+          else
+            ..._weightHistory.map(
+              (record) => _buildHistoryItem(
+                date: DateTime.parse(record['timestamp']).toString(),
+                weight: record['weight'].toString(),
+                value: record['total_value'].toString(),
+              ),
             ),
         ],
       ),

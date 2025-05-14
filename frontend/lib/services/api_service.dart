@@ -36,13 +36,16 @@ class ApiService {
           "timestamp": timestamp,
         }),
       );
+
       if (response.statusCode == 200) {
         print("Nota impressa com sucesso!");
       } else {
-        throw Exception("Erro ao imprimir a nota");
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['detail'] ?? "Erro ao imprimir a nota");
       }
     } catch (e) {
       print("Erro ao imprimir a nota: $e");
+      rethrow; // Propaga o erro para ser tratado pela UI
     }
   }
 
@@ -130,6 +133,48 @@ class ApiService {
       return data['is_connected'];
     } else {
       throw Exception("Erro ao verificar status da impressora");
+    }
+  }
+
+  // Método para obter o histórico de pesagens
+  Future<List<Map<String, dynamic>>> getWeightHistory({
+    String? startDate,
+    String? endDate,
+  }) async {
+    try {
+      String url = "$baseUrl/weight_records";
+      if (startDate != null || endDate != null) {
+        final params = <String, String>{};
+        if (startDate != null) params['start_date'] = startDate;
+        if (endDate != null) params['end_date'] = endDate;
+        url += "?" + Uri(queryParameters: params).query;
+      }
+
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data['records']);
+      } else {
+        throw Exception("Erro ao buscar histórico de pesagens");
+      }
+    } catch (e) {
+      print("Erro ao buscar histórico: $e");
+      return [];
+    }
+  }
+
+  // Método para obter estatísticas das pesagens
+  Future<Map<String, dynamic>> getWeightStats() async {
+    try {
+      final response = await http.get(Uri.parse("$baseUrl/weight_stats"));
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception("Erro ao buscar estatísticas");
+      }
+    } catch (e) {
+      print("Erro ao buscar estatísticas: $e");
+      return {'today_count': 0, 'today_total': 0.0, 'avg_weight': 0.0};
     }
   }
 }

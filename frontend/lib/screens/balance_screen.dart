@@ -20,12 +20,19 @@ class _BalanceScreenState extends State<BalanceScreen>
   double _previousWeight = 0.0;
   bool _isLoading = true;
   Color _statusColor = Colors.orange;
+  bool _isPrinting = false;
 
   // Cores do tema laranja
   final Color _primaryColor = Color(0xFFF97316);
   final Color _secondaryColor = Color(0xFFFF8C38);
   final Color _accentColor = Color(0xFFEB6C11);
   final Color _backgroundColor = Color(0xFFFFF8F0);
+
+  // Variáveis para resumo da nota impressa
+  double? _lastWeight;
+  double? _lastPricePerKg;
+  double? _lastTotalValue;
+  String? _lastTimestamp;
 
   @override
   void initState() {
@@ -78,12 +85,14 @@ class _BalanceScreenState extends State<BalanceScreen>
   }
 
   Future<void> _generateSimulatedWeight() async {
+    setState(() {
+      statusMessage = "Aguardando pesagem...";
+      _statusColor = Colors.orange;
+    });
     try {
       // Feedback tátil
       HapticFeedback.mediumImpact();
-
       double weight = await apiService.fetchWeight();
-
       // Configurando animação para transição suave
       _animationController?.reset();
       _weightAnimation = Tween<double>(
@@ -95,19 +104,16 @@ class _BalanceScreenState extends State<BalanceScreen>
           curve: Curves.easeOutCubic,
         ),
       )..addListener(() {
-          setState(() {
-            currentWeight = _weightAnimation!.value;
-          });
+        setState(() {
+          currentWeight = _weightAnimation!.value;
         });
-
+      });
       _animationController?.forward();
       _previousWeight = weight;
-
       setState(() {
-        statusMessage = "Peso detectado: ${weight.toStringAsFixed(3)} kg";
+        statusMessage = "Peso detectado: " + weight.toStringAsFixed(3) + " kg";
         _statusColor = Color(0xFF22C55E); // Verde
       });
-
       _startStabilizationTimer();
     } catch (e) {
       setState(() {
@@ -119,94 +125,118 @@ class _BalanceScreenState extends State<BalanceScreen>
   }
 
   void _startStabilizationTimer() {
-    // Cancela o timer anterior (se houver)
     stabilizationTimer?.cancel();
-
     setState(() {
       statusMessage = "Estabilizando pesagem...";
       _statusColor = Colors.blue;
     });
-
-    // Inicia um novo timer para estabilização
     stabilizationTimer = Timer(Duration(seconds: 3), () {
       _printTicket();
     });
   }
 
   Future<void> _printTicket() async {
-    final timestamp = DateTime.now();
-    final totalValue = currentWeight * pricePerKg;
-    final formattedTime = timestamp.toString().substring(0, 19);
+    if (currentWeight == null) return;
+    setState(() => _isPrinting = true);
+    try {
+      final timestamp = DateTime.now().toIso8601String();
+      final totalValue = currentWeight * pricePerKg;
+      final totalValueStr = "R\$ " + totalValue.toStringAsFixed(2);
+      await apiService.printTicket(currentWeight, totalValueStr, timestamp);
+      setState(() {
+        statusMessage = "Nota impressa";
+        _statusColor = Colors.green;
+        _lastWeight = currentWeight;
+        _lastPricePerKg = pricePerKg;
+        _lastTotalValue = totalValue;
+        _lastTimestamp = timestamp;
+      });
+      // Exibe o popup de resumo da nota
+      _showTicketSummaryDialog();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Nota impressa com sucesso!"),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Erro ao imprimir nota: " + e.toString()),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() => _isPrinting = false);
+    }
+  }
 
-    // Feedback tátil
-    HapticFeedback.heavyImpact();
-
-    await apiService.printTicket(
-      currentWeight,
-      "R\$ ${totalValue.toStringAsFixed(2)}",
-      formattedTime,
-    );
-
-    setState(() {
-      statusMessage = "Nota impressa com sucesso!";
-      _statusColor = _primaryColor;
-    });
-
-    // Exibe um pop-up para indicar que a nota foi "impressa"
+  void _showTicketSummaryDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.check_circle, color: _primaryColor),
-            SizedBox(width: 10),
-            Text("Nota Impressa", style: TextStyle(color: _primaryColor)),
-          ],
-        ),
-        content: Container(
-          constraints: BoxConstraints(minWidth: 300),
-          child: Column(
+      builder: (context) {
+        final date = DateTime.tryParse(_lastTimestamp ?? "");
+        final formattedDate =
+            date != null
+                ? "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}"
+                : _lastTimestamp ?? "";
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.receipt_long, color: _primaryColor),
+              SizedBox(width: 8),
+              Text("Resumo da Nota", style: TextStyle(color: _primaryColor)),
+            ],
+          ),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildTicketRow(
                 "Peso",
-                "${currentWeight.toStringAsFixed(3)} kg",
-              ),
-              SizedBox(height: 8),
-              _buildTicketRow(
-                "Preço por kg",
-                "R\$ ${pricePerKg.toStringAsFixed(2)}",
-              ),
-              SizedBox(height: 8),
-              Divider(),
-              SizedBox(height: 8),
-              _buildTicketRow(
-                "Total",
-                "R\$ ${totalValue.toStringAsFixed(2)}",
+                "${_lastWeight?.toStringAsFixed(3) ?? '-'} kg",
                 isBold: true,
               ),
               SizedBox(height: 8),
-              _buildTicketRow("Data/Hora", formattedTime),
+              _buildTicketRow(
+                "Preço/kg",
+                "R\$ ${_lastPricePerKg?.toStringAsFixed(2) ?? '-'}",
+              ),
+              SizedBox(height: 8),
+              _buildTicketRow(
+                "Valor Total",
+                "R\$ ${_lastTotalValue?.toStringAsFixed(2) ?? '-'}",
+                isBold: true,
+              ),
+              SizedBox(height: 8),
+              _buildTicketRow("Data/Hora", formattedDate),
             ],
           ),
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              "FECHAR",
-              style: TextStyle(
-                color: _primaryColor,
-                fontWeight: FontWeight.bold,
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                setState(() {
+                  statusMessage = "Aguardando pesagem...";
+                  _statusColor = Colors.orange;
+                  currentWeight = 0.0;
+                });
+              },
+              child: Text(
+                "FECHAR",
+                style: TextStyle(
+                  color: _primaryColor,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 
@@ -403,64 +433,65 @@ class _BalanceScreenState extends State<BalanceScreen>
           ),
         ],
       ),
-      body: _isLoading
-          ? Center(
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
-              ),
-            )
-          : SafeArea(
-              child: Column(
-                children: [
-                  SizedBox(height: 20),
-                  _buildWeightDisplay(),
-                  Expanded(
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            padding: EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              color: _primaryColor.withOpacity(0.1),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              Icons.scale_outlined,
-                              size: 70,
-                              color: _primaryColor.withOpacity(0.7),
-                            ),
-                          ),
-                          SizedBox(height: 16),
-                          Text(
-                            "Clique em   ",
-                            style: TextStyle(
-                              color: Colors.black54,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.refresh, color: _accentColor),
-                              Text(
-                                "   para simular uma pesagem",
-                                style: TextStyle(
-                                  color: Colors.black54,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
-                                ),
+      body:
+          _isLoading
+              ? Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                ),
+              )
+              : SafeArea(
+                child: Column(
+                  children: [
+                    SizedBox(height: 20),
+                    _buildWeightDisplay(),
+                    Expanded(
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: _primaryColor.withOpacity(0.1),
+                                shape: BoxShape.circle,
                               ),
-                            ],
-                          ),
-                        ],
+                              child: Icon(
+                                Icons.scale_outlined,
+                                size: 70,
+                                color: _primaryColor.withOpacity(0.7),
+                              ),
+                            ),
+                            SizedBox(height: 16),
+                            Text(
+                              "Clique em   ",
+                              style: TextStyle(
+                                color: Colors.black54,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.refresh, color: _accentColor),
+                                Text(
+                                  "   para simular uma pesagem",
+                                  style: TextStyle(
+                                    color: Colors.black54,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
     );
   }
 }
